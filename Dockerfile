@@ -12,11 +12,8 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build arguments for environment variables
-ARG VITE_API_URL
-
 # Set environment variables for build
-ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_API_URL=https://leader-back.incentino.xyz/api
 
 # Build the application
 RUN npm run build
