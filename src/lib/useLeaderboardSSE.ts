@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { io, Socket } from 'socket.io-client';
 import type { LeaderboardTeam } from '@/types';
@@ -19,8 +19,12 @@ export function useLeaderboardSSE(options: UseLeaderboardSocketOptions = {}) {
   const { enabled = true, onConnectionChange, onError } = options;
   const queryClient = useQueryClient();
   const socketRef = useRef<Socket | null>(null);
+  const callbacksRef = useRef({ onConnectionChange, onError });
 
-  const connect = useCallback(() => {
+  // Keep callbacks up to date without triggering reconnects
+  callbacksRef.current = { onConnectionChange, onError };
+
+  useEffect(() => {
     if (!enabled) return;
 
     // Don't create duplicate connections
@@ -33,7 +37,7 @@ export function useLeaderboardSSE(options: UseLeaderboardSocketOptions = {}) {
     const socket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
       reconnection: true,
-      reconnectionAttempts: 5,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 3000,
     });
 
@@ -41,7 +45,7 @@ export function useLeaderboardSSE(options: UseLeaderboardSocketOptions = {}) {
 
     socket.on('connect', () => {
       console.log('[useLeaderboardSocket] Connected');
-      onConnectionChange?.(true);
+      callbacksRef.current.onConnectionChange?.(true);
     });
 
     socket.on('leaderboard:update', (leaderboard: LeaderboardTeam[]) => {
@@ -52,28 +56,26 @@ export function useLeaderboardSSE(options: UseLeaderboardSocketOptions = {}) {
 
     socket.on('disconnect', (reason) => {
       console.log('[useLeaderboardSocket] Disconnected:', reason);
-      onConnectionChange?.(false);
+      callbacksRef.current.onConnectionChange?.(false);
     });
 
     socket.on('connect_error', (error) => {
       console.error('[useLeaderboardSocket] Connection error:', error);
-      onError?.('Connection failed. Retrying...');
+      callbacksRef.current.onError?.('Connection failed. Retrying...');
     });
-  }, [enabled, queryClient, onConnectionChange, onError]);
-
-  useEffect(() => {
-    connect();
 
     return () => {
       console.log('[useLeaderboardSocket] Cleaning up connection');
-      if (socketRef.current) {
-        socketRef.current.disconnect();
-        socketRef.current = null;
-      }
+      socket.disconnect();
+      socketRef.current = null;
     };
-  }, [connect]);
+  }, [enabled, queryClient]);
 
   return {
-    reconnect: connect,
+    reconnect: () => {
+      if (socketRef.current) {
+        socketRef.current.connect();
+      }
+    },
   };
 }
