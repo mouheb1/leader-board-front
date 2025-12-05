@@ -30,9 +30,7 @@ export function useLeaderboardSSE(options: UseLeaderboardSSEOptions = {}) {
 
     console.log('[useLeaderboardSSE] Connecting to SSE...');
 
-    const eventSource = new EventSource(`${SSE_URL}/api/sse/leaderboard`, {
-      withCredentials: true,
-    });
+    const eventSource = new EventSource(`${SSE_URL}/api/sse/leaderboard`);
 
     eventSourceRef.current = eventSource;
 
