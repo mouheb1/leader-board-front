@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { LeaderboardTeam } from '@/types';
 
-const SSE_URL = '';
+const SSE_URL = import.meta.env.VITE_API_URL?.replace('/api', '') || '';
 
 interface UseLeaderboardSSEOptions {
   enabled?: boolean;
