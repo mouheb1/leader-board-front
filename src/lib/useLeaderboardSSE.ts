@@ -1,99 +1,74 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { io, Socket } from 'socket.io-client';
 import type { LeaderboardTeam } from '@/types';
 
-const SSE_URL = import.meta.env.VITE_API_URL?.replace('/api', '') || '';
+const SOCKET_URL = import.meta.env.VITE_API_URL?.replace('/api', '') || '';
 
-interface UseLeaderboardSSEOptions {
+interface UseLeaderboardSocketOptions {
   enabled?: boolean;
   onConnectionChange?: (connected: boolean) => void;
   onError?: (error: string) => void;
 }
 
 /**
- * Hook that establishes an SSE connection to receive real-time leaderboard updates.
+ * Hook that establishes a Socket.IO connection to receive real-time leaderboard updates.
  * Automatically updates React Query cache when new data arrives.
  */
-export function useLeaderboardSSE(options: UseLeaderboardSSEOptions = {}) {
+export function useLeaderboardSSE(options: UseLeaderboardSocketOptions = {}) {
   const { enabled = true, onConnectionChange, onError } = options;
   const queryClient = useQueryClient();
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const socketRef = useRef<Socket | null>(null);
 
   const connect = useCallback(() => {
     if (!enabled) return;
 
     // Don't create duplicate connections
-    if (eventSourceRef.current?.readyState === EventSource.OPEN) {
+    if (socketRef.current?.connected) {
       return;
     }
 
-    console.log('[useLeaderboardSSE] Connecting to SSE...');
+    console.log('[useLeaderboardSocket] Connecting to Socket.IO...', SOCKET_URL);
 
-    const eventSource = new EventSource(`${SSE_URL}/api/sse/leaderboard`);
+    const socket = io(SOCKET_URL, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 3000,
+    });
 
-    eventSourceRef.current = eventSource;
+    socketRef.current = socket;
 
-    eventSource.onopen = () => {
-      console.log('[useLeaderboardSSE] SSE connected');
+    socket.on('connect', () => {
+      console.log('[useLeaderboardSocket] Connected');
       onConnectionChange?.(true);
+    });
 
-      // Clear any pending reconnect
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
-    };
+    socket.on('leaderboard:update', (leaderboard: LeaderboardTeam[]) => {
+      console.log('[useLeaderboardSocket] Leaderboard updated:', leaderboard.length, 'teams');
+      queryClient.setQueryData(['leaderboard'], leaderboard);
+      queryClient.invalidateQueries({ queryKey: ['teams'] });
+    });
 
-    eventSource.onmessage = (event) => {
-      console.log('[useLeaderboardSSE] SSE message received');
-      try {
-        const leaderboard: LeaderboardTeam[] = JSON.parse(event.data);
-        console.log('[useLeaderboardSSE] Leaderboard updated:', leaderboard.length, 'teams');
-
-        // Update React Query cache for both 'leaderboard' queries
-        queryClient.setQueryData(['leaderboard'], leaderboard);
-
-        // Also invalidate teams query to refresh related data
-        queryClient.invalidateQueries({ queryKey: ['teams'] });
-      } catch (err) {
-        console.error('[useLeaderboardSSE] Error parsing SSE data:', err);
-      }
-    };
-
-    eventSource.onerror = (err) => {
-      console.error('[useLeaderboardSSE] SSE error:', err);
+    socket.on('disconnect', (reason) => {
+      console.log('[useLeaderboardSocket] Disconnected:', reason);
       onConnectionChange?.(false);
-      onError?.('Connection lost. Reconnecting...');
+    });
 
-      // Close the errored connection
-      eventSource.close();
-      eventSourceRef.current = null;
-
-      // Schedule reconnect
-      if (!reconnectTimeoutRef.current) {
-        reconnectTimeoutRef.current = setTimeout(() => {
-          reconnectTimeoutRef.current = null;
-          connect();
-        }, 3000);
-      }
-    };
+    socket.on('connect_error', (error) => {
+      console.error('[useLeaderboardSocket] Connection error:', error);
+      onError?.('Connection failed. Retrying...');
+    });
   }, [enabled, queryClient, onConnectionChange, onError]);
 
   useEffect(() => {
     connect();
 
     return () => {
-      console.log('[useLeaderboardSSE] Cleaning up SSE connection');
-
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = null;
-      }
-
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
+      console.log('[useLeaderboardSocket] Cleaning up connection');
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
       }
     };
   }, [connect]);
